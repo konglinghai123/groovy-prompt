@@ -536,7 +536,7 @@ comment on column NURSE_EXECUTE_STATUS_DICT.STOP_STATUS is '对应的HIS系统�
 
 ```
 
-### 过程：医嘱拆分
+### 存储过程（SplitOrder）：医嘱拆分
 ```sql
 procedure SplitOrder(v_patient_id in varchar2, --病人ID
                        v_visit_id   in varchar2, --住院标识
