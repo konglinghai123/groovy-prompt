@@ -536,7 +536,132 @@ comment on column NURSE_EXECUTE_STATUS_DICT.STOP_STATUS is '对应的HIS系统�
 
 ```
 
-### 过程：医嘱拆分
+### 方法：生成条码号
+```sql
+--生成barcode
+  function f_general_barcode(v_administration in varchar2) return varchar2 as
+    v_prefix    varchar2(20);
+    v_serial_no varchar2(20);
+    n_seq_no    number(10);
+    n_count     number(5);
+  begin
+
+    n_count := 0;
+    select count(1)
+      into n_count
+      from nurse_administration_dict
+     where ADMINISTRATION_NAME = v_administration;
+    if n_count > 0 then
+
+      SELECT BARCODE_CLASS--execute_prefix
+        into v_prefix
+        from nurse_administration_dict
+       where ADMINISTRATION_NAME = v_administration;
+    end if;
+
+    if v_prefix is null then
+      v_prefix := 'QT';
+    end if;
+
+    select healthcare.nurse_execute_sequence.nextval
+      into n_seq_no
+      from dual;
+
+    v_serial_no := lpad(to_char(n_seq_no), 10, '0');
+
+    return 'ZXD' || v_prefix || v_serial_no;
+
+  end f_general_barcode;
+```
+### 方法：生成执行时间数组
+```sql
+function f_split_time(v_perform_schedule in varchar2, --执行时间，以分号隔开的时间格式，如9:30;10:30;
+                        d_execute_date     date) return dateArray --执行日期yyyy-mm-dd
+   as
+    v_time varchar2(500);
+    v_temp varchar2(500);
+
+    d_return_date date;
+
+    d_date_array dateArray;
+
+    i     number(5);
+    n_pos number(5);
+  begin
+
+    d_date_array := dateArray();
+
+    v_temp := v_perform_schedule;
+
+    if instr(v_temp, '补') > 0 or instr(v_temp, '术中') > 0 or
+       instr(v_temp, '取药') > 0 or instr(v_temp, '领药') > 0 then
+      v_temp := null;
+    end if;
+
+    if v_temp is null then
+      d_date_array.EXTEND;
+      d_date_array(1) := d_execute_date;
+      return d_date_array;
+    end if;
+
+    --时间格式是mm-dd hh24:mi
+    if length(v_temp) = 11 and substr(v_temp, 3, 1) = '-' and
+       substr(v_temp, 9, 1) = ':' then
+      d_date_array.EXTEND;
+      d_date_array(1) := to_date(to_char(sysdate, 'yyyy') || '-' || v_temp || ':' || '00',
+                                 'yyyy-mm-dd hh24:mi:ss');
+
+      return d_date_array;
+    end if;
+
+    if instr(v_temp, '-') > 0 and instr(v_temp, ':') > 0 then
+      d_date_array.EXTEND;
+      d_date_array(1) := to_date(to_char(sysdate, 'yyyy') || '-' || v_temp || ':' || '00',
+                                 'yyyy-mm-dd hh24:mi:ss');
+
+      return d_date_array;
+    end if;
+
+    select replace(v_temp, '-', ';') into v_temp from dual;
+    select replace(v_temp, '；', ';') into v_temp from dual;
+    select replace(v_temp, '：', ':') into v_temp from dual;
+
+    v_temp := v_temp || ';';
+    i      := 0;
+
+    --拆分时间点
+    while instr(v_temp, ';') > 0 loop
+      n_pos  := instr(v_temp, ';');
+      v_time := substr(v_temp, 0, n_pos - 1);
+
+      if instr(v_time, '24') = 1 then
+        v_time := '23:59';
+      end if;
+
+      if instr(v_time, ':') <= 0 then
+        v_time := v_time || ':00:00';
+      else
+        v_time := v_time || ':00';
+      end if;
+
+      select to_date(to_char(d_execute_date, 'yyyy-mm-dd') || ' ' || v_time,
+                     'yyyy-mm-dd hh24:mi:ss')
+        into d_return_date
+        from dual;
+
+      i := i + 1;
+
+      d_date_array.EXTEND;
+      d_date_array(i) := d_return_date;
+
+      v_temp := substr(v_temp, n_pos + 1);
+    end loop;
+
+    return d_date_array;
+
+  end f_split_time;
+```
+### 存储过程：医嘱拆分（SplitOrder）
 ```sql
 procedure SplitOrder(v_patient_id in varchar2, --病人ID
                        v_visit_id   in varchar2, --住院标识
@@ -1115,130 +1240,3 @@ procedure SplitOrder(v_patient_id in varchar2, --病人ID
       return;
   end SplitOrder;
 ```
-
-### 方法：生成条码号
-```sql
---生成barcode
-  function f_general_barcode(v_administration in varchar2) return varchar2 as
-    v_prefix    varchar2(20);
-    v_serial_no varchar2(20);
-    n_seq_no    number(10);
-    n_count     number(5);
-  begin
-
-    n_count := 0;
-    select count(1)
-      into n_count
-      from nurse_administration_dict
-     where ADMINISTRATION_NAME = v_administration;
-    if n_count > 0 then
-
-      SELECT BARCODE_CLASS--execute_prefix
-        into v_prefix
-        from nurse_administration_dict
-       where ADMINISTRATION_NAME = v_administration;
-    end if;
-
-    if v_prefix is null then
-      v_prefix := 'QT';
-    end if;
-
-    select healthcare.nurse_execute_sequence.nextval
-      into n_seq_no
-      from dual;
-
-    v_serial_no := lpad(to_char(n_seq_no), 10, '0');
-
-    return 'ZXD' || v_prefix || v_serial_no;
-
-  end f_general_barcode;
-```
-### 方法：生成执行时间数组
-```sql
-function f_split_time(v_perform_schedule in varchar2, --执行时间，以分号隔开的时间格式，如9:30;10:30;
-                        d_execute_date     date) return dateArray --执行日期yyyy-mm-dd
-   as
-    v_time varchar2(500);
-    v_temp varchar2(500);
-
-    d_return_date date;
-
-    d_date_array dateArray;
-
-    i     number(5);
-    n_pos number(5);
-  begin
-
-    d_date_array := dateArray();
-
-    v_temp := v_perform_schedule;
-
-    if instr(v_temp, '补') > 0 or instr(v_temp, '术中') > 0 or
-       instr(v_temp, '取药') > 0 or instr(v_temp, '领药') > 0 then
-      v_temp := null;
-    end if;
-
-    if v_temp is null then
-      d_date_array.EXTEND;
-      d_date_array(1) := d_execute_date;
-      return d_date_array;
-    end if;
-
-    --时间格式是mm-dd hh24:mi
-    if length(v_temp) = 11 and substr(v_temp, 3, 1) = '-' and
-       substr(v_temp, 9, 1) = ':' then
-      d_date_array.EXTEND;
-      d_date_array(1) := to_date(to_char(sysdate, 'yyyy') || '-' || v_temp || ':' || '00',
-                                 'yyyy-mm-dd hh24:mi:ss');
-
-      return d_date_array;
-    end if;
-
-    if instr(v_temp, '-') > 0 and instr(v_temp, ':') > 0 then
-      d_date_array.EXTEND;
-      d_date_array(1) := to_date(to_char(sysdate, 'yyyy') || '-' || v_temp || ':' || '00',
-                                 'yyyy-mm-dd hh24:mi:ss');
-
-      return d_date_array;
-    end if;
-
-    select replace(v_temp, '-', ';') into v_temp from dual;
-    select replace(v_temp, '；', ';') into v_temp from dual;
-    select replace(v_temp, '：', ':') into v_temp from dual;
-
-    v_temp := v_temp || ';';
-    i      := 0;
-
-    --拆分时间点
-    while instr(v_temp, ';') > 0 loop
-      n_pos  := instr(v_temp, ';');
-      v_time := substr(v_temp, 0, n_pos - 1);
-
-      if instr(v_time, '24') = 1 then
-        v_time := '23:59';
-      end if;
-
-      if instr(v_time, ':') <= 0 then
-        v_time := v_time || ':00:00';
-      else
-        v_time := v_time || ':00';
-      end if;
-
-      select to_date(to_char(d_execute_date, 'yyyy-mm-dd') || ' ' || v_time,
-                     'yyyy-mm-dd hh24:mi:ss')
-        into d_return_date
-        from dual;
-
-      i := i + 1;
-
-      d_date_array.EXTEND;
-      d_date_array(i) := d_return_date;
-
-      v_temp := substr(v_temp, n_pos + 1);
-    end loop;
-
-    return d_date_array;
-
-  end f_split_time;
-```
-
